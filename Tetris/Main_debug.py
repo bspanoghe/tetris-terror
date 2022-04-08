@@ -429,7 +429,6 @@ def update_state(parameters):
 
 
 import matplotlib.pyplot as plt
-import numpy as np
 
 def visualize_state(grid):
       plt.imshow(grid, cmap='hot', interpolation='nearest')
@@ -442,7 +441,7 @@ parameters["current_piece"].y += 10
 parameters = update_state(parameters)
 visualize_state(parameters["grid"])
 
-action = 1
+action = 1 # Possible actions = [0, 1, 2, 3, 4] = [quickfall, left, right, rotate, down]
 
 parameters = process_event(parameters, action) # Let action change state
 parameters = update_state(parameters)
