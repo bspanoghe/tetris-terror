@@ -207,20 +207,17 @@ def convert_shape_format(shape):
       return positions
 
 
-def valid_space(shape, grid):
-      accepted_pos = [[(j, i) for j in range(10) if grid[i][j] == (0, 0, 0)] for i in range(20)] #all possible positions within the boundaries and are white aka not already occupied
-      accepted_pos = [j for sub in accepted_pos for j in sub] #take all positions in list and slap them into a one dimensional list
-      #e.g.: [[(2, 5)], [(0, 3)]] -> [(2,5), (0,3)]
+def valid_space(shape, locked_positions):
+      locked_pos = list(locked_positions.keys())
 
       formatted = convert_shape_format(shape)
 
       for pos in formatted:
-            if pos not in accepted_pos:
-                  if pos[1] > -1: 
-                        return False
-                        #if the y-value is within boundaries (but x isnt), return false 
-                        # => block will start above visible grid aka in negative y boundaries but thats allowed, we don't return false for that
-      
+            if pos in locked_pos:
+                  return False
+            if pos[0] < 0 or pos[0] >= 10 or pos[1] >= 20:
+                  return False
+
       return True
 
 
@@ -249,7 +246,7 @@ def draw_text_middle(text, size, color, surface):
 
 
 def draw_grid(surface, grid):
-#draw lines of grid
+      #draw lines of grid
       sx = top_left_x #shorten notation
       sy = top_left_y
 
@@ -309,7 +306,7 @@ def draw_window(surface, grid, score = 0, CURSE = Curses.NO_CURSE):
       label = font.render('TURBO TETRIS', 1, (255, 255, 255))
 
       surface.blit(label, (top_left_x + play_width / 2 - (label.get_width() / 2), 30))
- #label, coordinates of middle of screen
+      #label, coordinates of middle of screen
 
       #draw the blocks
       for i in range(len(grid)):
@@ -335,8 +332,6 @@ def draw_window(surface, grid, score = 0, CURSE = Curses.NO_CURSE):
             label_actual_curse = font.render(str(CURSE.name), 1, (255, 0, 0))
             surface.blit(label_curse, (sx, sy + block_size))
             surface.blit(label_actual_curse, (sx, sy + 2*block_size))
-
-
 
       draw_grid(surface, grid)
 
@@ -375,200 +370,203 @@ def play_sound(file, type):
 def inflict_curse(effect = None):
       if effect == 'inflict':
             CURSE = random.choice(ACTUAL_CURSES)
-            #CURSE = Curses.LIES
-            turn = 1
+            curse_turn = 1
 
       if effect == 'tick':
             CURSE = Curses.NO_CURSE
-            turn = 0
+            curse_turn = 0
                   
-      return CURSE, turn
+      return CURSE, curse_turn
 
 
+def process_event(parameters, event):
+      if event.type == pygame.QUIT:
+            parameters["run"] = False
+            pygame.display.quit()
+            quit()
+      
+      if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_1:
+                  parameters["score"] += CURSE_POINT
+                  parameters["cursescore"] += CURSE_POINT
+            if event.key == pygame.K_SPACE:
+                  parameters["quickfall"] = True
+                  parameters["current_speed"] = parameters["fall_speed"]
+                  parameters["fall_speed"] = QUICKFALL_SPEED
+
+            if str(parameters["curse"].name) == 'MISDIRECTION':
+                  if event.key == pygame.K_LEFT:
+                        parameters["current_piece"].x += 1
+                        if not(valid_space(parameters["current_piece"], parameters["locked_positions"])):
+                              parameters["current_piece"].x -= 1
+                        
+                  elif event.key == pygame.K_RIGHT:
+                        parameters["current_piece"].x -= 1
+                        if not(valid_space(parameters["current_piece"], parameters["locked_positions"])):
+                              parameters["current_piece"].x += 1 #if block moves outside of boundaries, put it back
+
+                  elif event.key == pygame.K_UP:
+                        parameters["current_piece"].y += 1
+                        if not(valid_space(parameters["current_piece"], parameters["locked_positions"])):
+                              parameters["current_piece"].y -= 1      
+
+                  elif event.key == pygame.K_DOWN:
+                        parameters["current_piece"].rotation += 1
+                        if not(valid_space(parameters["current_piece"], parameters["locked_positions"])):
+                              parameters["current_piece"].rotation -= 1
+
+            else:
+                  if event.key == pygame.K_LEFT:
+                        parameters["current_piece"].x -= 1
+                        if not(valid_space(parameters["current_piece"], parameters["locked_positions"])):
+                              parameters["current_piece"].x += 1 #if block moves outside of boundaries, put it back
+
+                  elif event.key == pygame.K_RIGHT:
+                        parameters["current_piece"].x += 1
+                        if not(valid_space(parameters["current_piece"], parameters["locked_positions"])):
+                              parameters["current_piece"].x -= 1
+
+                  elif event.key == pygame.K_UP:
+                        parameters["current_piece"].rotation += 1
+                        if not(valid_space(parameters["current_piece"], parameters["locked_positions"])):
+                              parameters["current_piece"].rotation -= 1
+
+                  elif event.key == pygame.K_DOWN:
+                        parameters["current_piece"].y += 1
+                        if not(valid_space(parameters["current_piece"], parameters["locked_positions"])):
+                              parameters["current_piece"].y -= 1
+      return parameters
+
+def update_state(parameters):
+      parameters["grid"] = create_grid(parameters["locked_positions"]) #locked_positions may change while running
+
+      if parameters["curse"] == Curses.FAST:
+            if parameters["fall_speed"] != FAST_SPEED and parameters["fall_speed"] != QUICKFALL_SPEED:
+                  parameters["current_speed"] = parameters["fall_speed"]
+            parameters["fall_speed"] = FAST_SPEED
+
+      shape_pos = convert_shape_format(parameters["current_piece"])
+
+      #draw current piece
+      for i in range(len(shape_pos)):
+            x, y = shape_pos[i]
+            if y > -1: #we're not showing the block before its in the visible part of the grid
+                  parameters["grid"][y][x] = parameters["current_piece"].color
+                  
+      #if piece landed, add its location and color to locked_positions, and go on to the next piece (and create a new next piece for after that)
+      if parameters["change_piece"]:
+            for pos in shape_pos:
+                  p = (pos[0], pos[1])
+                  parameters["locked_positions"][p] = parameters["current_piece"].color
+            
+            inc = clear_rows(parameters["grid"], parameters["locked_positions"])
+            
+            if inc > 0:
+                  parameters["score_increased"] = True
+                  parameters["score"] += inc**2 * 500 
+                  parameters["cursescore"] += inc**2 * 500
+            
+            if parameters["curse_turn"] > 0:
+                  parameters["curse_turn"] += 1
+                  if parameters["curse_turn"] > 3: 
+                        parameters["curse"], parameters["curse_turn"] = inflict_curse('tick')
+            
+            if parameters["cursescore"] >= CURSE_POINT and parameters["curse_turn"] == 0:
+                  parameters["curse"], parameters["curse_turn"] = inflict_curse('inflict')
+                  parameters["cursescore"] = parameters["score"] % CURSE_POINT
+            
+            if parameters["quickfall"]:
+                  parameters["quickfall"] = False
+                  parameters["fall_speed"] = parameters["current_speed"]
+
+            parameters["current_piece"] = parameters["next_piece"]
+            parameters["next_piece"] = get_shape(parameters["curse"])
+            parameters["change_piece"] = False
+      
+      return parameters
 
 def main(win):
-	
-      locked_positions = {}
-      grid = create_grid(locked_positions)
-
-      change_piece = False
-      run = True
-      quickfall = False
-      current_piece = get_shape()
-      next_piece = get_shape()
       clock = pygame.time.Clock()
       fall_time = 0
-      fall_speed = 0.27
       level_time = 0
-      current_speed = 0.27
-      score = 0
-      cursescore = 0
-      turn = 0
-      CURSE = Curses.NO_CURSE
 
-      while run: #so you can quit
-            grid = create_grid(locked_positions) #locked_positions may change while running
-            fall_time += clock.get_rawtime() #gets amount of time since clock.tick() clicked, starts at 0
-            level_time += clock.get_rawtime()
-            clock.tick()
+      parameters = {"run":True, "locked_positions":{}, "grid":create_grid(), "change_piece":False, "quickfall":False, \
+            "current_piece":get_shape(), "next_piece":get_shape(), "fall_speed":0.27, \
+            "current_speed":0.27, "score":0, "cursescore":0, "score_increased":False, "curse_turn":0, "curse":Curses.NO_CURSE}
 
-            if CURSE == Curses.FAST:
-                  if fall_speed != FAST_SPEED and fall_speed != QUICKFALL_SPEED:
-                        current_speed = fall_speed
-                  fall_speed = FAST_SPEED
-
-            if level_time/1000 >= 10:
-                  level_time = 0
-                  if fall_speed > TERMINAL_SPEED:   #minimum value for fall_speed so you don't start going super fucking fast after 2 minutes
-                        fall_speed -= 0.005
-                  
-            if fall_time/1000 >= fall_speed:
-                  #fall_time is given in ms, speed in s
-                  fall_time = 0
-                  current_piece.y += 1
-                  #move your piece down every tick
-                  if not(valid_space(current_piece, grid)) and current_piece.y > 0:
-                        current_piece.y -= 1
-                        change_piece = True #the piece has landed, time to get to the next one (and lock current piece's pos)
-                  if CURSE != Curses.FAST and fall_speed == FAST_SPEED:
-                        fall_speed = current_speed
-
-            for event in pygame.event.get():
-                  if event.type == pygame.QUIT:
-                        run = False
-                        pygame.display.quit()
-                        quit()
-                  
-                  if event.type == pygame.KEYDOWN:
-                        if event.key == pygame.K_1:
-                              score += CURSE_POINT
-                              cursescore += CURSE_POINT
-                        if event.key == pygame.K_SPACE:
-                              quickfall = True
-                              current_speed = fall_speed
-                              fall_speed = QUICKFALL_SPEED
-
-                        if str(CURSE.name) == 'MISDIRECTION':
-                              if event.key == pygame.K_LEFT:
-                                    current_piece.x += 1
-                                    if not(valid_space(current_piece, grid)):
-                                          current_piece.x -= 1
-                                    
-                              elif event.key == pygame.K_RIGHT:
-                                    current_piece.x -= 1
-                                    if not(valid_space(current_piece, grid)):
-                                          current_piece.x += 1 #if block moves outside of boundaries, put it back
-
-                              elif event.key == pygame.K_UP:
-                                    current_piece.y += 1
-                                    if not(valid_space(current_piece, grid)):
-                                          current_piece.y -= 1      
-
-                              elif event.key == pygame.K_DOWN:
-                                    current_piece.rotation += 1
-                                    if not(valid_space(current_piece, grid)):
-                                          current_piece.rotation -= 1
-
-                        else:
-                              if event.key == pygame.K_LEFT:
-                                    current_piece.x -= 1
-                                    if not(valid_space(current_piece, grid)):
-                                          current_piece.x += 1 #if block moves outside of boundaries, put it back
-
-                              elif event.key == pygame.K_RIGHT:
-                                    current_piece.x += 1
-                                    if not(valid_space(current_piece, grid)):
-                                          current_piece.x -= 1
-
-                              elif event.key == pygame.K_UP:
-                                    current_piece.rotation += 1
-                                    if not(valid_space(current_piece, grid)):
-                                          current_piece.rotation -= 1
-
-                              elif event.key == pygame.K_DOWN:
-                                    current_piece.y += 1
-                                    if not(valid_space(current_piece, grid)):
-                                          current_piece.y -= 1
-
-
-            shape_pos = convert_shape_format(current_piece)
-
-            #draw current piece
-            for i in range(len(shape_pos)):
-                  x, y = shape_pos[i]
-                  if y > -1: #we're not showing the block before its in the visible part of the grid
-                        grid[y][x] = current_piece.color
-                        
-            #if piece landed, add its location and color to locked_positions, and go on to the next piece (and create a new next piece for after that)
-            if change_piece:
-                  for pos in shape_pos:
-                        p = (pos[0], pos[1])
-                        locked_positions[p] = current_piece.color
-                  
-                  inc = clear_rows(grid, locked_positions)
-
-                  if inc > 0:
-                        play_sound(random.choice(sounds), 'effect')
-
-                  score += inc**2 * 500 
-                  cursescore += inc**2 * 500
-
-                  if turn > 0:
-                        turn += 1
-                        if turn > 3: 
-                              CURSE, turn = inflict_curse('tick')
-                  
-                  if cursescore >= CURSE_POINT and turn == 0:
-                        CURSE, turn = inflict_curse('inflict')
-                        cursescore = score % CURSE_POINT
-                  
-                  if quickfall:
-                        quickfall = False
-                        fall_speed = current_speed
-
-                  current_piece = next_piece
-                  next_piece = get_shape(CURSE)
-                  false_shape = get_shape(CURSE)
-                  while false_shape == next_piece:
-                        false_shape = get_shape(CURSE)
-                  change_piece = False
-                                          
+      while parameters["run"]: #so you can quit
+            events = pygame.event.get() # Get all inputted actions
             
-            draw_window(win, grid, score, CURSE)
+            for event in events:
+                  parameters = process_event(parameters, event) # Let action change state
+                  parameters = update_state(parameters) # Remaining state updates
 
-            if str(CURSE.name) == "LIES": 
-                  draw_next_shape(false_shape, win, CURSE)
+            parameters = update_state(parameters)
+
+            if parameters["score_increased"] > 0:
+                  play_sound(random.choice(sounds), 'effect')
+                  parameters["score_increased"] = False
+                  
+            draw_window(win, parameters["grid"], parameters["score"], parameters["curse"])
+
+            if str(parameters["curse"].name) == "LIES": 
+                  false_shape = get_shape(parameters["curse"])
+                  while false_shape == parameters["next_piece"]:
+                        false_shape = get_shape(parameters["curse"])
+                  draw_next_shape(false_shape, win, parameters["curse"])
             else:
-                  draw_next_shape(next_piece, win, CURSE)
+                  draw_next_shape(parameters["next_piece"], win, parameters["curse"])
 
             pygame.display.update()
 
-            if check_lost(locked_positions):
+            if check_lost(parameters["locked_positions"]):
                   draw_text_middle("YOU LOST AHAHAHA", 80, (255, 255, 255), win)
                   pygame.mixer.music.stop()
                   play_sound('Failed', 'effect')
                   pygame.display.update()
                   pygame.time.delay(2000)
                   effect.stop()
-                  run = False
-                  update_score(score)
+                  parameters["run"] = False
+                  update_score(parameters["score"])
+                  
+            fall_time += clock.get_rawtime() #gets amount of time since clock.tick() clicked, starts at 0
+            level_time += clock.get_rawtime()
+            clock.tick()
+
+            if level_time/1000 >= 10:
+                  level_time = 0
+                  if parameters["fall_speed"] > TERMINAL_SPEED:   #minimum value for fall_speed so you don't start going super fucking fast after 2 minutes
+                        parameters["fall_speed"] -= 0.005
+                  
+            if fall_time/1000 >= parameters["fall_speed"]:
+                  #fall_time is given in ms, speed in s
+                  fall_time = 0
+                  parameters["current_piece"].y += 1
+
+                  #move your piece down every tick
+                  if not(valid_space(parameters["current_piece"], parameters["locked_positions"])) and parameters["current_piece"].y > 0:
+                        parameters["current_piece"].y -= 1
+                        parameters["change_piece"] = True #the piece has landed, time to get to the next one (and lock current piece's pos)
+
+                  if parameters["curse"] != Curses.FAST and parameters["fall_speed"] == FAST_SPEED:
+                        parameters["fall_speed"] = parameters["current_speed"]
 
 
 def main_menu(win):
-      run = True
-      while run:
+      main_run = True
+      while main_run:
             win.fill((0, 0, 0))
             draw_text_middle('Press any key to begin', 60, (255, 255, 255), win)
 
             pygame.display.update()
             for event in pygame.event.get():
                   if event.type == pygame.QUIT:
-                        run = False
+                        main_run = False
                   if event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_ESCAPE:
-                              run = False
+                              main_run = False
                         else:
-                              play_sound('Vento', 'song')
+                              # play_sound('Vento', 'song')
                               main(win)
       
       
