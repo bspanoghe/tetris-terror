@@ -378,6 +378,17 @@ def inflict_curse(effect = None):
                   
       return CURSE, curse_turn
 
+def initialize_game():
+      clock = pygame.time.Clock()
+      fall_time = 0
+      level_time = 0
+
+      parameters = {"run":True, "locked_positions":{}, "grid":create_grid(), "change_piece":False, "quickfall":False, \
+            "current_piece":get_shape(), "next_piece":get_shape(), "fall_speed":0.27, \
+            "current_speed":0.27, "score":0, "cursescore":0, "score_increased":False, "curse_turn":0, "curse":Curses.NO_CURSE}
+
+      return clock, fall_time, level_time, parameters
+
 
 def process_event(parameters, event):
       if event.type == pygame.QUIT:
@@ -486,13 +497,7 @@ def update_state(parameters):
       return parameters
 
 def main(win):
-      clock = pygame.time.Clock()
-      fall_time = 0
-      level_time = 0
-
-      parameters = {"run":True, "locked_positions":{}, "grid":create_grid(), "change_piece":False, "quickfall":False, \
-            "current_piece":get_shape(), "next_piece":get_shape(), "fall_speed":0.27, \
-            "current_speed":0.27, "score":0, "cursescore":0, "score_increased":False, "curse_turn":0, "curse":Curses.NO_CURSE}
+      clock, fall_time, level_time, parameters = initialize_game()
 
       while parameters["run"]: #so you can quit
             events = pygame.event.get() # Get all inputted actions
