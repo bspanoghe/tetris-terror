@@ -38,14 +38,13 @@ def create_model(convneurons, denseneurons, etha, input_shape, num_outputs):
   # create linear model
   model = Sequential()
   # we start with a first convolutional block of layers
-  model.add(Conv2D(filters = convneurons[0], kernel_size = (5, 5), padding='same', input_shape = input_shape, strides = 2, kernel_initializer = initializers.variance_scaling(scale=2)))
+  model.add(Conv2D(filters = convneurons[0], kernel_size = (4, 4), padding='same', input_shape = input_shape, strides = 1, kernel_initializer = initializers.variance_scaling(scale=2)))
   model.add(Activation('relu'))
-  model.add(MaxPooling2D(pool_size=(2, 2)))
   # middle layers
 
-  model.add(Conv2D(filters = convneurons[1], kernel_size = (4, 4), padding='same', strides = 2, kernel_initializer = initializers.variance_scaling(scale=2)))
+  model.add(Conv2D(filters = convneurons[1], kernel_size = (4, 4), padding='same', strides = 1, kernel_initializer = initializers.variance_scaling(scale=2)))
   model.add(Activation('relu'))
-  model.add(Conv2D(filters = convneurons[2], kernel_size = (3, 3), padding='same', strides = 1, kernel_initializer = initializers.variance_scaling(scale=2)))
+  model.add(Conv2D(filters = convneurons[2], kernel_size = (4, 4), padding='same', strides = 1, kernel_initializer = initializers.variance_scaling(scale=2)))
   model.add(Activation('relu'))
   
 
@@ -104,15 +103,8 @@ def update_network(train_network, target_network, memory, state_memory, endstate
   return MSE
 
 def preprocess_state(state):
-  # Crop and resize the image
-  img = state[1:171:2, ::2]
-  # Convert to grayscale
-  img = (0.3*img[:, :, 0] + 0.59*img[:, :, 1] + 0.11*img[:, :, 2]).astype("uint8")
-  # Improve image contrast
-  img[img == 31] = 0 #31 is bg color
-  # Next we DONT normalize the image from 0 to 1
-  #img = img/256 ## Don't chance datatype from uint8 to float until the last moment to conserve memory!
-  img = img.reshape(img.shape + (1,))
+  # binair maken
+  # omzetten naar numpy array
   return img
 
 def random_action(legal_actions):
@@ -120,7 +112,7 @@ def random_action(legal_actions):
   return np.random.randint(len(legal_actions))
 
 def generate_startingstate(STATE_HISTORY_LEN):
-  state = env.reset()
+  #state = # overnemen van tetris code 'initialize game'
   state = preprocess_state(state)
   state = np.concatenate([state for _ in range(STATE_HISTORY_LEN)], axis = 2)
   return state
@@ -134,12 +126,7 @@ def update_state(state, frame):
 
 """# Environment"""
 
-env = gym.make("MsPacman-v0")
-# Set up a virtual display for rendering OpenAI gym environments.
-
-
-print(env.unwrapped.get_action_meanings())
-legal_actions = [1, 2, 3, 4]
+legal_actions = [0, 1, 2, 3, 4, 5]
 
 """# Parameters"""
 
@@ -157,7 +144,7 @@ EPS_DECAY = (EPS_MIN/EPS)**(1/EXPLORE_LEN) # Amount EPS changes every time an ep
 REWARD_EPS_DECAY = 1 # Amount of EPS changes every time a threshold is passed
 
 GAMMA = 0.99 # Weight of rewards further in future
-STATE_HISTORY_LEN = 4 # Amount of frames that are skipped then added to memory
+STATE_HISTORY_LEN = 1 # Amount of frames that are skipped then added to memory
 DEATH_PENALTY = 50
 REWARD_THRESHOLD = 1000
 REWARD_INCREASE = 1000
@@ -168,18 +155,15 @@ ETHA = 0.00025
 BATCH_SIZE = 32
 BATCHNORM = False
 
-state = env.reset()
-print(state.shape)
 state = generate_startingstate(STATE_HISTORY_LEN)
-print(state.shape)
 
 state_shape = state.shape
 action_size = len(legal_actions) # Amount of possible actions to take
 
 """# Initialization"""
 
-# We split up the memory into 3 part to account for the variable dimensionality of the states dpending on the chosen game
-memory = np.zeros((MEMORY_SIZE, 3), dtype = "int32") # store the chosen action, the reward and whether you were done
+# We split up the memory into 3 part to account for the variable dimensionality of the states depending on the chosen game
+memory = np.zeros((MEMORY_SIZE, 4), dtype = "int32") # store the chosen action, the reward and whether you were done
 state_memory = np.zeros((MEMORY_SIZE,) + state_shape, dtype = "uint8") # state_shape is a tuple, so we turn MEMORY_SIZE into a tuple before concatenating
 endstate_memory = np.zeros((MEMORY_SIZE,) + state_shape, dtype = "uint8")
 
@@ -197,7 +181,7 @@ with open(logbook_dir, 'a') as writefile:
   writefile.write(f"\nTRAINING_STEPS:{TRAINING_STEPS},LEN_EPISODE:{LEN_EPISODE},NUM_EPISODES:{NUM_EPISODES}")
   writefile.write(f"\nMEMORY_SIZE:{MEMORY_SIZE},EPS:{EPS},EPS_DECAY:{EPS_DECAY},EPS_MIN:{EPS_MIN},GAMMA:{GAMMA},STATE_HISTORY_LEN:{STATE_HISTORY_LEN}")
   writefile.write(f"\nCONVNEURONS:{CONVNEURONS},DENSENEURONS:{DENSENEURONS},ETHA:{ETHA},BATCH_SIZE:{BATCH_SIZE},BATCHNORM:{BATCHNORM}")
-  writefile.write(f"\nEXTRA NOTES: Starting from episode 358 weights of previous network without you_died")  
+  writefile.write(f"\nEXTRA NOTES: ")  
   writefile.write(f"\n------------------------------------------------------------------------------------------------------------------")
   writefile.close()
 
@@ -224,20 +208,18 @@ while memorycounter < INITIAL_MEMORY_SIZE: # Keep going until the memory is full
   endstate = generate_startingstate(STATE_HISTORY_LEN)
   all_states = np.concatenate((endstate, endstate), axis = 2) # Keeps track of states + endstates
   action = random_action(legal_actions) # Initialization of memory done with random steps
-  time_alive = 0
-  lives = 3
+  time_played = 0
 
   while not done and memorycounter < INITIAL_MEMORY_SIZE: # Keep going until you're dead/done or the memory is full
-    history_counter = time_alive % STATE_HISTORY_LEN
+    history_counter = time_played % STATE_HISTORY_LEN
 
-    endframe, reward, done, info = env.step(legal_actions[action])
-    newlives = info["ale.lives"]
-    if newlives < lives or done: # a life was lost
+    endframe, reward, done, next_piece = game_step(state, legal_actions[action]) # aanpassen naar process event/ update state (eventueel andere functie voor maken)
+
+    if done: # a life was lost
       history_reward -= DEATH_PENALTY
-    lives = np.copy(newlives)
     history_reward += reward
     stepcounter += 1
-    time_alive += 1
+    time_played += 1
     all_states = update_state(all_states, endframe)
 
     if history_counter == STATE_HISTORY_LEN-1:
@@ -251,7 +233,6 @@ while memorycounter < INITIAL_MEMORY_SIZE: # Keep going until the memory is full
 
       memorycounter += 1
 
-      #action = env.action_space.sample() # Repeat the same action every STATE_HISTORY_LEN times
       action = random_action(legal_actions)
 
 """# Training"""
@@ -260,17 +241,16 @@ memory_full = False
 stepcounter = 0 # Keep track of in-game steps
 traincounter = 0 # Keep track of amount of training sessions (every time it updates)
 episodecounter = 0 # Keep track of episodes (every time target network updates)
-time_alive = 0 # Keep track how long you stay alive
+time_played = 0 # Keep track how long you stay alive
 history_reward = 0 # Keep track of the reward over the last frames until you save data to the memory
 score = 0
-lives = 3
+next_piece = 0 # This is the index of the next_piece in the list of shapes (see Piece class in Main.py)
 
 endstate = generate_startingstate(STATE_HISTORY_LEN)
 all_states = np.concatenate((endstate, endstate), axis = 2)
 action = choose_action(endstate, EPS, train_network, legal_actions)
 
-MSE_list = [] # Store score, time_alive and MSE
-env2 = gym.make("MsPacman-v0")
+MSE_list = [] # Store score, time_played and MSE
 
 while episodecounter <= NUM_EPISODES:
   print("Now running episode", episodecounter)
@@ -297,22 +277,20 @@ while episodecounter <= NUM_EPISODES:
         all_states = np.concatenate((endstate, endstate), axis = 2)
         action = choose_action(endstate, EPS, train_network, legal_actions)
 
-        time_alive = 0
+        time_played = 0
         score = 0
-        lives = 3
+        next_piece = 0
 
       while not done and stepcounter <= TRAINING_STEPS: # Keep going until you're dead/done or the episode is done
-        history_counter = time_alive % STATE_HISTORY_LEN
+        history_counter = time_played % STATE_HISTORY_LEN
 
-        endframe, reward, done, info = env.step(legal_actions[action])
-        newlives = info["ale.lives"]
-        if newlives < lives or done: # a life was lost
+        endframe, reward, done, next_piece = game_step(state, legal_actions[action])
+        if done: # a life was lost
           history_reward -= DEATH_PENALTY
-        lives = np.copy(newlives)
         history_reward += reward 
         score += reward
         stepcounter += 1
-        time_alive += 1
+        time_played += 1
         all_states = update_state(all_states, endframe)
 
         if history_counter == STATE_HISTORY_LEN-1: # Only store data to memory and choose an action every STATE_HISTORY_LEN times (action thus gets repeated STATE_HISTORY_LEN times)
@@ -346,7 +324,7 @@ while episodecounter <= NUM_EPISODES:
   traincounter = 0
   target_network.set_weights(train_network.get_weights())
 
-  state_test = env2.reset()
+  # state_test =  game_initialize
   state_test = preprocess_state(state_test)
   state_test = np.concatenate([state_test for _ in range(STATE_HISTORY_LEN)], axis = 2)
 
@@ -356,7 +334,7 @@ while episodecounter <= NUM_EPISODES:
 
   while not done2:
     action2 = choose_action(state_test, 0, train_network, legal_actions)
-    endframe2, reward_test, done2, info2 = env2.step(legal_actions[action2])
+    endframe2, reward_test, done2, next_piece2 = game_step(state, legal_actions[action2])
     stepcounter2 += 1
     score2 += reward_test
     state_test = update_state(state_test, endframe2)
@@ -376,26 +354,3 @@ while episodecounter <= NUM_EPISODES:
     MSE_list = []
   
   train_network.save_weights("latest_weights.h5")
-
-
-
-"""# Result Visualization"""
-
-env = gym.make("MsPacman-v0")
-
-endstate = generate_startingstate(STATE_HISTORY_LEN)
-
-done = False
-stepcounter = 0
-score = 0
-
-while not done:
-  _ = env.render()
-  action = choose_action(endstate, 0, train_network, legal_actions)
-  endframe, reward, done, info = env.step(legal_actions[action])
-  stepcounter += 1
-  score += reward
-  endstate = update_state(endstate, endframe)
-env.close()
-
-print("Lasted", stepcounter, " frames and got a score of", score, "!")
