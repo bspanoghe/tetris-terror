@@ -1,5 +1,6 @@
 import pygame
 import random
+import numpy as np
 from enum import Enum, auto
 
 pygame.init()
@@ -188,6 +189,7 @@ def create_grid(locked_positions={}):
 
       return grid
 
+
 def convert_shape_format(shape):
 	#turn the shape into actual useful information
       positions = []
@@ -205,6 +207,7 @@ def convert_shape_format(shape):
 
       return positions
 
+
 def valid_space(shape, locked_positions):
       locked_pos = list(locked_positions.keys())
 
@@ -218,12 +221,6 @@ def valid_space(shape, locked_positions):
 
       return True
 
-def max_score():
-      with open('./Hiscores.txt', 'r') as f:
-            lines = f.readlines()
-            score = lines[0].strip()  #no \n
-
-      return score
 
 def check_lost(positions):
 	#check if the blocks have reached the top of the screen aka you lost boi
@@ -231,7 +228,8 @@ def check_lost(positions):
             x, y = pos
             if y < 1:
                   return True
-      return False
+      return False 
+
 
 def get_shape(CURSE = Curses.NO_CURSE):
       #creates a random piece at the top middle of the screen
@@ -281,7 +279,8 @@ def clear_rows(grid, locked):
                         locked[newKey] = locked.pop(key)
 
       return inc
-      
+
+
 def draw_next_shape(shape, surface, CURSE = Curses.NO_CURSE):
       font = pygame.font.SysFont('papyrus', 30)
       label = font.render('Next shape', 1, (255, 255, 255))
@@ -336,6 +335,49 @@ def draw_window(surface, grid, score = 0, CURSE = Curses.NO_CURSE):
             surface.blit(label_actual_curse, (sx, sy + 2*block_size))
 
       draw_grid(surface, grid)
+
+def max_score():
+      with open('./Hiscores.txt', 'r') as f:
+            lines = f.readlines()
+            score = lines[0].strip()  #no \n
+
+      return score
+
+
+def update_score(nscore):
+      score = max_score()
+
+      with open('./Hiscores.txt', 'w') as f:
+            if nscore > int(score):
+                  f.write(str(nscore))
+            else:
+                  f.write(str(score))
+
+
+def play_sound(file, type):
+
+      if type == 'song':
+            pygame.mixer.music.load('./Sounds/{}.mp3'.format(file))
+            pygame.mixer.music.play(-1)
+            pygame.mixer.music.set_volume(0.15)
+
+      else:
+            global effect
+            effect = pygame.mixer.Sound('./Sounds/{}.wav'.format(file))
+            effect.play()
+            effect.set_volume(0.2)
+
+
+def inflict_curse(effect = None):
+      if effect == 'inflict':
+            CURSE = random.choice(ACTUAL_CURSES)
+            curse_turn = 1
+
+      if effect == 'tick':
+            CURSE = Curses.NO_CURSE
+            curse_turn = 0
+                  
+      return CURSE, curse_turn
 
 def initialize_game():
       clock = pygame.time.Clock()
@@ -427,23 +469,103 @@ def update_state(parameters):
       
       return parameters
 
+def game_step(parameters, action):
+      previous_score = parameters["score"]
+      parameters = process_event(parameters, action) # Let action change state
+      parameters = update_state(parameters)
+      reward = parameters["score"] - previous_score
+      next_piece_ind = shapes.index(parameters["next_piece"].shape)
 
-import matplotlib.pyplot as plt
+      return parameters["grid"], reward, parameters["run"], next_piece_ind, parameters
 
-def visualize_state(grid):
-      plt.imshow(grid, cmap='hot', interpolation='nearest')
-      plt.show()
+def main(win):
+      clock, fall_time, level_time, parameters = initialize_game()
+      state = parameters["grid"]
 
-clock, fall_time, level_time, parameters = initialize_game()
+      while parameters["run"]: #so you can quit
 
-parameters["current_piece"].y += 10
+            action = choose_action(state, legal_actions)   
+            
+            state, reward, done, next_piece, parameters = game_step(parameters, action)
 
-parameters = update_state(parameters)
-visualize_state(parameters["grid"])
+            if parameters["score_increased"] > 0:
+                  play_sound(random.choice(sounds), 'effect')
+                  parameters["score_increased"] = False
+                  
+            draw_window(win, parameters["grid"], parameters["score"], parameters["curse"])
 
-action = 1 # Possible actions = [0, 1, 2, 3, 4] = [quickfall, left, right, rotate, down]
+            if str(parameters["curse"].name) == "LIES": 
+                  false_shape = get_shape(parameters["curse"])
+                  while false_shape == parameters["next_piece"]:
+                        false_shape = get_shape(parameters["curse"])
+                  draw_next_shape(false_shape, win, parameters["curse"])
+            else:
+                  draw_next_shape(parameters["next_piece"], win, parameters["curse"])
 
-parameters = process_event(parameters, action) # Let action change state
-parameters = update_state(parameters)
-visualize_state(parameters["grid"]) # State
-print(parameters["score"]) # Reward
+            pygame.display.update()
+
+            if check_lost(parameters["locked_positions"]):
+                  draw_text_middle("YOU LOST AHAHAHA", 80, (255, 255, 255), win)
+                  pygame.mixer.music.stop()
+                  play_sound('Failed', 'effect')
+                  pygame.display.update()
+                  pygame.time.delay(2000)
+                  effect.stop()
+                  parameters["run"] = False
+                  update_score(parameters["score"])
+                  
+            fall_time += clock.get_rawtime() #gets amount of time since clock.tick() clicked, starts at 0
+            level_time += clock.get_rawtime()
+            clock.tick()
+
+            if level_time/1000 >= 10:
+                  level_time = 0
+                  if parameters["fall_speed"] > TERMINAL_SPEED:   #minimum value for fall_speed so you don't start going super fucking fast after 2 minutes
+                        parameters["fall_speed"] -= 0.005
+                  
+            if fall_time/1000 >= parameters["fall_speed"]:
+                  #fall_time is given in ms, speed in s
+                  fall_time = 0
+                  parameters["current_piece"].y += 1
+
+                  #move your piece down every tick
+                  if not(valid_space(parameters["current_piece"], parameters["locked_positions"])) and parameters["current_piece"].y > 0:
+                        parameters["current_piece"].y -= 1
+                        parameters["change_piece"] = True #the piece has landed, time to get to the next one (and lock current piece's pos)
+
+                  if parameters["curse"] != Curses.FAST and parameters["fall_speed"] == FAST_SPEED:
+                        parameters["fall_speed"] = parameters["current_speed"]
+
+
+def main_menu(win):
+      main_run = True
+      while main_run:
+            win.fill((0, 0, 0))
+            draw_text_middle('Press any key to begin', 60, (255, 255, 255), win)
+
+            pygame.display.update()
+            for event in pygame.event.get():
+                  if event.type == pygame.QUIT:
+                        main_run = False
+                  if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_ESCAPE:
+                              main_run = False
+                        else:
+                              # play_sound('Vento', 'song')
+                              main(win)
+      
+      
+      pygame.display.quit()
+      main(win)
+
+legal_actions = [0, 1, 2, 3, 4, 5]
+
+def random_agent(state, legal_actions):
+      return np.random.randint(len(legal_actions))
+
+def choose_action(state, legal_actions):
+      return random_agent(state, legal_actions)
+
+win = pygame.display.set_mode((s_width, s_height)) #define pygame window
+pygame.display.set_caption('Tetris')
+main_menu(win)  # start game
