@@ -6,6 +6,7 @@ from gym.wrappers import Monitor
 import ffmpeg
 import numpy as np
 from PIL import Image
+import Tetris.Main_computerman as Tetris
 
 import tensorflow as tf
 from tensorflow import keras
@@ -112,7 +113,7 @@ def random_action(legal_actions):
   return np.random.randint(len(legal_actions))
 
 def generate_startingstate(STATE_HISTORY_LEN):
-  #state = # overnemen van tetris code 'initialize game'
+  _, _, _, state = Tetris.initialize_game() # geeft clock, fall_time, level_time, parameters terug
   state = preprocess_state(state)
   state = np.concatenate([state for _ in range(STATE_HISTORY_LEN)], axis = 2)
   return state
@@ -213,7 +214,8 @@ while memorycounter < INITIAL_MEMORY_SIZE: # Keep going until the memory is full
   while not done and memorycounter < INITIAL_MEMORY_SIZE: # Keep going until you're dead/done or the memory is full
     history_counter = time_played % STATE_HISTORY_LEN
 
-    endframe, reward, done, next_piece = game_step(state, legal_actions[action]) # aanpassen naar process event/ update state (eventueel andere functie voor maken)
+    endframe, reward, run, next_piece, parameters = Tetris.game_step(state, legal_actions[action]) 
+    done = not(run)
 
     if done: # a life was lost
       history_reward -= DEATH_PENALTY
@@ -284,7 +286,8 @@ while episodecounter <= NUM_EPISODES:
       while not done and stepcounter <= TRAINING_STEPS: # Keep going until you're dead/done or the episode is done
         history_counter = time_played % STATE_HISTORY_LEN
 
-        endframe, reward, done, next_piece = game_step(state, legal_actions[action])
+        endframe, reward, run, next_piece, parameters = Tetris.game_step(state, legal_actions[action]) 
+        done = not(run)
         if done: # a life was lost
           history_reward -= DEATH_PENALTY
         history_reward += reward 
@@ -324,7 +327,7 @@ while episodecounter <= NUM_EPISODES:
   traincounter = 0
   target_network.set_weights(train_network.get_weights())
 
-  # state_test =  game_initialize
+  _, _, _, state_test =  Tetris.initialize_game()
   state_test = preprocess_state(state_test)
   state_test = np.concatenate([state_test for _ in range(STATE_HISTORY_LEN)], axis = 2)
 
@@ -334,7 +337,8 @@ while episodecounter <= NUM_EPISODES:
 
   while not done2:
     action2 = choose_action(state_test, 0, train_network, legal_actions)
-    endframe2, reward_test, done2, next_piece2 = game_step(state, legal_actions[action2])
+    endframe2, reward_test, run2, next_piece2, parameters2 = Tetris.game_step(state, legal_actions[action2])
+    done2 = not(run2)
     stepcounter2 += 1
     score2 += reward_test
     state_test = update_state(state_test, endframe2)
