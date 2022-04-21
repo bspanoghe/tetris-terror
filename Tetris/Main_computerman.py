@@ -476,7 +476,7 @@ def game_step(parameters, action):
       reward = parameters["score"] - previous_score
       next_piece_ind = shapes.index(parameters["next_piece"].shape)
 
-      return parameters["grid"], reward, parameters["run"], next_piece_ind, parameters
+      return parameters["grid"], reward, not(parameters["run"]), next_piece_ind, parameters
 
 def main(win):
       clock, fall_time, level_time, parameters = initialize_game()
@@ -566,6 +566,6 @@ def random_agent(state, legal_actions):
 def choose_action(state, legal_actions):
       return random_agent(state, legal_actions)
 
-win = pygame.display.set_mode((s_width, s_height)) #define pygame window
-pygame.display.set_caption('Tetris')
-main_menu(win)  # start game
+#win = pygame.display.set_mode((s_width, s_height)) #define pygame window
+#pygame.display.set_caption('Tetris')
+#main_menu(win)  # start game

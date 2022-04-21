@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 # Imports & environment creation
 
-import gym
-from gym.wrappers import Monitor
-import ffmpeg
 import numpy as np
 from PIL import Image
 import Tetris.Main_computerman as Tetris
+import matplotlib.pyplot as plt
 
 import tensorflow as tf
 from tensorflow import keras
@@ -83,6 +81,7 @@ def update_network(train_network, target_network, memory, state_memory, endstate
   actions = memory[batch_ids, 0].astype("int") # We'll be using the action as an index, so no floating numbers
   rewards = memory[batch_ids, 1]
   dones = memory[batch_ids, 2]
+  next_pieces = memory[batch_ids, 3]
 
   states = state_memory[batch_ids]/256 # Normalize images at the last moment
   endstates = endstate_memory[batch_ids]/256
@@ -104,8 +103,16 @@ def update_network(train_network, target_network, memory, state_memory, endstate
   return MSE
 
 def preprocess_state(state):
-  # binair maken
-  # omzetten naar numpy array
+  # Crop and resize the image
+  img = np.array(state)
+  img = img[1:171:2, ::2]
+  # Convert to grayscale
+  img = (0.3*img[:, :, 0] + 0.59*img[:, :, 1] + 0.11*img[:, :, 2]).astype("uint8")
+  # Improve image contrast
+  #img[img == 31] = 0 #31 is bg color
+  # Next we DONT normalize the image from 0 to 1
+  #img = img/256 ## Don't chance datatype from uint8 to float until the last moment to conserve memory!
+  img = img.reshape(img.shape + (1,))
   return img
 
 def random_action(legal_actions):
@@ -113,10 +120,11 @@ def random_action(legal_actions):
   return np.random.randint(len(legal_actions))
 
 def generate_startingstate(STATE_HISTORY_LEN):
-  _, _, _, state = Tetris.initialize_game() # geeft clock, fall_time, level_time, parameters terug
+  _, _, _, parameters = Tetris.initialize_game() # geeft clock, fall_time, level_time, parameters 
+  state = parameters["grid"]
   state = preprocess_state(state)
   state = np.concatenate([state for _ in range(STATE_HISTORY_LEN)], axis = 2)
-  return state
+  return state, parameters
 
 def update_state(state, frame):
   #k = 3 ## for RGB
@@ -156,7 +164,7 @@ ETHA = 0.00025
 BATCH_SIZE = 32
 BATCHNORM = False
 
-state = generate_startingstate(STATE_HISTORY_LEN)
+state, _ = generate_startingstate(STATE_HISTORY_LEN)
 
 state_shape = state.shape
 action_size = len(legal_actions) # Amount of possible actions to take
@@ -164,7 +172,7 @@ action_size = len(legal_actions) # Amount of possible actions to take
 """# Initialization"""
 
 # We split up the memory into 3 part to account for the variable dimensionality of the states depending on the chosen game
-memory = np.zeros((MEMORY_SIZE, 4), dtype = "int32") # store the chosen action, the reward and whether you were done
+memory = np.zeros((MEMORY_SIZE, 4), dtype = "int32") # store the chosen action, the reward, whether you were done and the next piece
 state_memory = np.zeros((MEMORY_SIZE,) + state_shape, dtype = "uint8") # state_shape is a tuple, so we turn MEMORY_SIZE into a tuple before concatenating
 endstate_memory = np.zeros((MEMORY_SIZE,) + state_shape, dtype = "uint8")
 
@@ -192,6 +200,7 @@ memorycounter = 0
 stepcounter = 0
 history_reward = 0 # Remember the reward of the last STATE_HISTORY_LEN frames
 done = False
+next_piece = 0
 
 while memorycounter < INITIAL_MEMORY_SIZE: # Keep going until the memory is full
   if done: # You died
@@ -199,14 +208,14 @@ while memorycounter < INITIAL_MEMORY_SIZE: # Keep going until the memory is full
     state = all_states[:,:,0:state_shape[-1]]
     endstate = all_states[:,:,state_shape[-1]:]
 
-    memory[memorycounter, ] = [np.copy(action), np.copy(history_reward), np.copy(done)]
+    memory[memorycounter, ] = [np.copy(action), np.copy(history_reward), np.copy(done), np.copy(next_piece)]
     state_memory[memorycounter, ] = np.copy(state)
     endstate_memory[memorycounter, ] = np.copy(endstate)
     history_reward = 0
     memorycounter += 1
 
   done = False
-  endstate = generate_startingstate(STATE_HISTORY_LEN)
+  endstate, parameters = generate_startingstate(STATE_HISTORY_LEN)
   all_states = np.concatenate((endstate, endstate), axis = 2) # Keeps track of states + endstates
   action = random_action(legal_actions) # Initialization of memory done with random steps
   time_played = 0
@@ -214,21 +223,20 @@ while memorycounter < INITIAL_MEMORY_SIZE: # Keep going until the memory is full
   while not done and memorycounter < INITIAL_MEMORY_SIZE: # Keep going until you're dead/done or the memory is full
     history_counter = time_played % STATE_HISTORY_LEN
 
-    endframe, reward, run, next_piece, parameters = Tetris.game_step(state, legal_actions[action]) 
-    done = not(run)
+    state, reward, done, next_piece, parameters = Tetris.game_step(parameters, legal_actions[action]) 
 
-    if done: # a life was lost
+    if done: # the game is over
       history_reward -= DEATH_PENALTY
     history_reward += reward
     stepcounter += 1
     time_played += 1
-    all_states = update_state(all_states, endframe)
+    all_states = update_state(all_states, state)
 
     if history_counter == STATE_HISTORY_LEN-1:
       state = all_states[:,:,0:state_shape[-1]]
       endstate = all_states[:,:,state_shape[-1]:]
 
-      memory[memorycounter, ] = [np.copy(action), np.copy(history_reward), np.copy(done)]
+      memory[memorycounter, ] = [np.copy(action), np.copy(history_reward), np.copy(done), np.copy(next_piece)]
       state_memory[memorycounter, ] = np.copy(state)
       endstate_memory[memorycounter, ] = np.copy(endstate)
       history_reward = 0
@@ -248,7 +256,7 @@ history_reward = 0 # Keep track of the reward over the last frames until you sav
 score = 0
 next_piece = 0 # This is the index of the next_piece in the list of shapes (see Piece class in Main.py)
 
-endstate = generate_startingstate(STATE_HISTORY_LEN)
+endstate, parameters = generate_startingstate(STATE_HISTORY_LEN)
 all_states = np.concatenate((endstate, endstate), axis = 2)
 action = choose_action(endstate, EPS, train_network, legal_actions)
 
@@ -263,7 +271,7 @@ while episodecounter <= NUM_EPISODES:
         state = all_states[:,:,0:state_shape[-1]]
         endstate = all_states[:,:,state_shape[-1]:]
 
-        memory[memorycounter, ] = [np.copy(action), np.copy(history_reward), np.copy(done)]
+        memory[memorycounter, ] = [np.copy(action), np.copy(history_reward), np.copy(done), np.copy(next_piece)]
         state_memory[memorycounter, ] = np.copy(state)
         endstate_memory[memorycounter, ] = np.copy(endstate)
         history_reward = 0
@@ -275,7 +283,7 @@ while episodecounter <= NUM_EPISODES:
         # Reset the environment, a new beginning
         done = False
 
-        endstate = generate_startingstate(STATE_HISTORY_LEN)
+        endstate, parameters = generate_startingstate(STATE_HISTORY_LEN)
         all_states = np.concatenate((endstate, endstate), axis = 2)
         action = choose_action(endstate, EPS, train_network, legal_actions)
 
@@ -286,21 +294,20 @@ while episodecounter <= NUM_EPISODES:
       while not done and stepcounter <= TRAINING_STEPS: # Keep going until you're dead/done or the episode is done
         history_counter = time_played % STATE_HISTORY_LEN
 
-        endframe, reward, run, next_piece, parameters = Tetris.game_step(state, legal_actions[action]) 
-        done = not(run)
-        if done: # a life was lost
+        state, reward, done, next_piece, parameters = Tetris.game_step(parameters, legal_actions[action]) 
+        if done: # the game is over
           history_reward -= DEATH_PENALTY
         history_reward += reward 
         score += reward
         stepcounter += 1
         time_played += 1
-        all_states = update_state(all_states, endframe)
+        all_states = update_state(all_states, state)
 
         if history_counter == STATE_HISTORY_LEN-1: # Only store data to memory and choose an action every STATE_HISTORY_LEN times (action thus gets repeated STATE_HISTORY_LEN times)
           state = all_states[:,:,0:state_shape[-1]]
           endstate = all_states[:,:,state_shape[-1]:]
 
-          memory[memorycounter, ] = [np.copy(action), np.copy(history_reward), np.copy(done)]
+          memory[memorycounter, ] = [np.copy(action), np.copy(history_reward), np.copy(done), np.copy(next_piece)]
           state_memory[memorycounter, ] = np.copy(state)
           endstate_memory[memorycounter, ] = np.copy(endstate)
           history_reward = 0
@@ -327,7 +334,8 @@ while episodecounter <= NUM_EPISODES:
   traincounter = 0
   target_network.set_weights(train_network.get_weights())
 
-  _, _, _, state_test =  Tetris.initialize_game()
+  _, _, _, parameters_test =  Tetris.initialize_game()
+  state_test = parameters_test["grid"]
   state_test = preprocess_state(state_test)
   state_test = np.concatenate([state_test for _ in range(STATE_HISTORY_LEN)], axis = 2)
 
@@ -337,11 +345,10 @@ while episodecounter <= NUM_EPISODES:
 
   while not done2:
     action2 = choose_action(state_test, 0, train_network, legal_actions)
-    endframe2, reward_test, run2, next_piece2, parameters2 = Tetris.game_step(state, legal_actions[action2])
-    done2 = not(run2)
+    state2, reward_test, done2, next_piece2, parameters2 = Tetris.game_step(parameters_test, legal_actions[action2])
     stepcounter2 += 1
     score2 += reward_test
-    state_test = update_state(state_test, endframe2)
+    state_test = update_state(state_test, state2)
 
   if episodecounter-1 <= EXPLORE_LEN and EPS > EPS_MIN:
     EPS = EPS * EPS_DECAY
