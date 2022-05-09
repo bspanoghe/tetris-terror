@@ -417,6 +417,7 @@ def process_event(parameters, action):
             parameters["current_piece"].y += 1
             if not(valid_space(parameters["current_piece"], parameters["locked_positions"])):
                   parameters["current_piece"].y -= 1
+                  parameters["change_piece"] = True # Piece has landed
       # Else: do nothing
 
       return parameters
@@ -469,24 +470,48 @@ def update_state(parameters):
       
       return parameters
 
-def game_step(parameters, action):
+def calc_fitness(locked_positions):
+      locked_pos = np.zeros((20, 10))
+
+      locked_pos_idxs = tuple(zip(*(locked_positions.keys())))[-1::-1] # Good luck figuring out what this does
+      locked_pos[locked_pos_idxs] = 1
+
+      heights = np.array([20 - col.nonzero()[0][0] if col.nonzero()[0].size else 0 for col in np.transpose(locked_pos)]) # This too (ok this one is not as hard)
+      agg_height = np.sum(heights)
+      holes = np.sum([np.sum(col[-1:20-heights[i]:-1] == 0) for (i, col) in enumerate(np.transpose(locked_pos))])
+      bumpiness = np.sum(abs(heights[1:] - heights[:-1]))
+      return -0.51*agg_height - 0.36*holes - 0.18*bumpiness
+
+def game_step(parameters, action, time_played):
       previous_score = parameters["score"]
-      parameters = process_event(parameters, action) # Let action change state
+      previous_fitness = calc_fitness(parameters["locked_positions"])
+
+      parameters = process_event(parameters, action) # Let action change state   
       parameters = update_state(parameters)
-      reward = parameters["score"] - previous_score
+
+      training_reward = calc_fitness(parameters["locked_positions"]) - previous_fitness
+
+      if time_played % 5 == 0: # Every 5 time steps, block moves down automatically
+            parameters = process_event(parameters, 4) # action 4 = go down
+            parameters = update_state(parameters)
+
+      reward = parameters["score"] - previous_score + training_reward
       next_piece_ind = shapes.index(parameters["next_piece"].shape)
+
+      if check_lost(parameters["locked_positions"]):
+            parameters["run"] = False
 
       return parameters["grid"], reward, not(parameters["run"]), next_piece_ind, parameters
 
-def main(win):
+def main(win, model, EPS):
       clock, fall_time, level_time, parameters = initialize_game()
       state = parameters["grid"]
 
       while parameters["run"]: #so you can quit
 
-            action = choose_action(state, legal_actions)   
+            action = choose_action(state, model, EPS)   
             
-            state, reward, done, next_piece, parameters = game_step(parameters, action)
+            state, _, _, _, parameters = game_step(parameters, action)
 
             if parameters["score_increased"] > 0:
                   play_sound(random.choice(sounds), 'effect')
@@ -513,6 +538,8 @@ def main(win):
                   effect.stop()
                   parameters["run"] = False
                   update_score(parameters["score"])
+                  return parameters["score"]
+                  
                   
             fall_time += clock.get_rawtime() #gets amount of time since clock.tick() clicked, starts at 0
             level_time += clock.get_rawtime()
@@ -536,8 +563,48 @@ def main(win):
                   if parameters["curse"] != Curses.FAST and parameters["fall_speed"] == FAST_SPEED:
                         parameters["fall_speed"] = parameters["current_speed"]
 
+def main_no_screen(model, EPS):
+      clock, fall_time, level_time, parameters = initialize_game()
+      state = parameters["grid"]
 
-def main_menu(win):
+      while parameters["run"]: #so you can quit
+
+            action = choose_action(state, model, EPS)   
+            
+            state, reward, done, next_piece, parameters = game_step(parameters, action)
+
+            if parameters["score_increased"] > 0:
+                  parameters["score_increased"] = False
+                  
+            if check_lost(parameters["locked_positions"]):
+                  parameters["run"] = False
+                  update_score(parameters["score"])
+                  return parameters["score"]
+                  
+                  
+            fall_time += clock.get_rawtime() #gets amount of time since clock.tick() clicked, starts at 0
+            level_time += clock.get_rawtime()
+            clock.tick()
+
+            if level_time/1000 >= 10:
+                  level_time = 0
+                  if parameters["fall_speed"] > TERMINAL_SPEED:   #minimum value for fall_speed so you don't start going super fucking fast after 2 minutes
+                        parameters["fall_speed"] -= 0.005
+                  
+            if fall_time/1000 >= parameters["fall_speed"]:
+                  #fall_time is given in ms, speed in s
+                  fall_time = 0
+                  parameters["current_piece"].y += 1
+
+                  #move your piece down every tick
+                  if not(valid_space(parameters["current_piece"], parameters["locked_positions"])) and parameters["current_piece"].y > 0:
+                        parameters["current_piece"].y -= 1
+                        parameters["change_piece"] = True #the piece has landed, time to get to the next one (and lock current piece's pos)
+
+                  if parameters["curse"] != Curses.FAST and parameters["fall_speed"] == FAST_SPEED:
+                        parameters["fall_speed"] = parameters["current_speed"]
+
+def main_menu(win, model, EPS):
       main_run = True
       while main_run:
             win.fill((0, 0, 0))
@@ -552,20 +619,50 @@ def main_menu(win):
                               main_run = False
                         else:
                               # play_sound('Vento', 'song')
-                              main(win)
+                              score = main(win, model, EPS)
+                              main_run = False
       
       
       pygame.display.quit()
-      main(win)
+      return score
+      # main(win, model)
 
-legal_actions = [0, 1, 2, 3, 4, 5]
 
-def random_agent(state, legal_actions):
+
+def random_action():
+      legal_actions = [0, 1, 2, 3, 4, 5]
       return np.random.randint(len(legal_actions))
 
-def choose_action(state, legal_actions):
-      return random_agent(state, legal_actions)
+def preprocess_state(state):
+  # turn list of lists into np array
+  img = np.array(state)
+  # Collapse 3rd dimension (color) through summing & reshaping
+  img = np.sum(img, axis = 2)
+  img = img.reshape(img.shape + (1,))
+  # Binarize
+  img = img.astype("bool")
 
-#win = pygame.display.set_mode((s_width, s_height)) #define pygame window
-#pygame.display.set_caption('Tetris')
-#main_menu(win)  # start game
+  return img
+
+def get_Q_values(state, model):
+  state = preprocess_state(state)
+  state = np.reshape(state, (1,) + state.shape) # Specify to the model it's getting one state
+  return model(state).numpy()[0] # Returns list of lists, but we only use one input (for which model(x) is faster than model.predict(x))
+
+def choose_action(state, model, EPS):
+  if np.random.rand() < EPS: # With probability epsilon:
+    #return env.action_space.sample() # Return random action
+    return random_action()
+  else:
+    q_values = get_Q_values(state, model)
+    return np.argmax(q_values) # Return index of action with highest q-value
+      
+def play_game_visualized(model, EPS):
+      win = pygame.display.set_mode((s_width, s_height)) #define pygame window
+      pygame.display.set_caption('Tetris')
+      score = main_menu(win, model, EPS)  # start game
+      return score
+
+def play_game(model, EPS):
+      score = main_no_screen(model, EPS)
+      return score

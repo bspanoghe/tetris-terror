@@ -1,5 +1,7 @@
 import pygame
 import random
+import numpy as np
+import matplotlib.pyplot as plt
 from enum import Enum, auto
 
 pygame.init()
@@ -375,6 +377,7 @@ def process_event(parameters, action):
             parameters["current_piece"].y += 1
             if not(valid_space(parameters["current_piece"], parameters["locked_positions"])):
                   parameters["current_piece"].y -= 1
+                  parameters["change_piece"] = True
       # Else: do nothing
 
       return parameters
@@ -427,23 +430,42 @@ def update_state(parameters):
       
       return parameters
 
+def preprocess_state(state):
+  # turn list of lists into np array
+  img = np.array(state)
+  # Collapse 3rd dimension (color) through summing & reshaping
+  img = np.sum(img, axis = 2)
+  # Binarize
+  img = img.astype("bool")
 
-import matplotlib.pyplot as plt
+  return img
 
 def visualize_state(grid):
       plt.imshow(grid, cmap='hot', interpolation='nearest')
       plt.show()
 
+def random_action():
+      legal_actions = [0, 1, 2, 3, 4, 5]
+      return np.random.randint(len(legal_actions))
+
 clock, fall_time, level_time, parameters = initialize_game()
 
-parameters["current_piece"].y += 10
-
-parameters = update_state(parameters)
-visualize_state(parameters["grid"])
-
-action = 1 # Possible actions = [0, 1, 2, 3, 4] = [quickfall, left, right, rotate, down]
-
-parameters = process_event(parameters, action) # Let action change state
-parameters = update_state(parameters)
+for _ in range(1000):
+      parameters = process_event(parameters, random_action()) # Let action change state
+      parameters = update_state(parameters)
 visualize_state(parameters["grid"]) # State
 print(parameters["score"]) # Reward
+
+state = preprocess_state(parameters["grid"])
+visualize_state(state)
+
+locked_pos = np.zeros((20, 10))
+
+locked_pos_idxs = tuple(zip(*(parameters["locked_positions"].keys())))[-1::-1] # Good luck figuring out what this does
+locked_pos[locked_pos_idxs] = 1
+
+heights = np.array([20 - col.nonzero()[0][0] if col.nonzero()[0].size else 0 for col in np.transpose(locked_pos)]) # This too (ok this one is not as hard)
+holes = [np.sum(col[-1:20-heights[i]:-1] == 0) for (i, col) in enumerate(np.transpose(locked_pos))]
+bumpiness = np.sum(abs(heights[1:] - heights[:-1]))
+
+visualize_state(locked_pos)
