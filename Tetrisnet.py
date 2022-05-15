@@ -198,21 +198,21 @@ NUM_EPISODES = 3000 # Amount of episodes the NN trains
 NUM_EPISODES_LOG = 1 # log data for visualization every specified number of episodes 
 EXPLORE_LEN = 30 # Amount of episodes in the exploration phase (EPS goes to EPS_min in this time period) ##np.ceil((np.log(EPS_MIN)-np.log(EPS))/np.log(EPS_DECAY))
 
-MEMORY_SIZE = 50000 # Amount of actions remembered at one time
-INITIAL_MEMORY_SIZE = 10000 # Part of memory that gets populated by a random agent
+MEMORY_SIZE = 10000 # Amount of actions remembered at one time
+INITIAL_MEMORY_SIZE = 2000 # Part of memory that gets populated by a random agent
 EPS = 1 # Chance of taking a random action instead of the one with highest Q-value
 EPS_MIN = 0.1 # Minimum value of EPS
 EPS_DECAY = (EPS_MIN/EPS)**(1/EXPLORE_LEN) # Amount EPS changes every time an episode has passed
 REWARD_EPS_DECAY = 1 # Amount of EPS changes every time a threshold is passed
 
-GAMMA = 0.995 # Weight of rewards further in future
+GAMMA = 0.99 # Weight of rewards further in future
 STATE_HISTORY_LEN = 2 # Amount of frames used as input for network
-DEATH_PENALTY = 50
+DEATH_PENALTY = 10
 REWARD_THRESHOLD = 1000
 REWARD_INCREASE = 1000
 
 CONVNEURONS = [64, 64, 64]
-DENSENEURONS = [128, 32]
+DENSENEURONS = [256, 64]
 ETHA = 0.00025
 BATCH_SIZE = 32
 BATCHNORM = False
@@ -246,7 +246,7 @@ with open(logbook_dir, 'a') as writefile:
   writefile.write(f"\nTRAINING_STEPS:{TRAINING_STEPS},LEN_EPISODE:{LEN_EPISODE},NUM_EPISODES:{NUM_EPISODES}")
   writefile.write(f"\nMEMORY_SIZE:{MEMORY_SIZE},EPS:{EPS},EPS_DECAY:{EPS_DECAY},EPS_MIN:{EPS_MIN},GAMMA:{GAMMA},STATE_HISTORY_LEN:{STATE_HISTORY_LEN}")
   writefile.write(f"\nCONVNEURONS:{CONVNEURONS},DENSENEURONS:{DENSENEURONS},ETHA:{ETHA},BATCH_SIZE:{BATCH_SIZE},BATCHNORM:{BATCHNORM}")
-  writefile.write(f"\nEXTRA NOTES: Strides are out, and we're rocking a small dense layer to compensate!")  
+  writefile.write(f"\nEXTRA NOTES: Actually lets go bigger dense layer again. More power, baby!")  
   writefile.write(f"\n------------------------------------------------------------------------------------------------------------------")
   writefile.close()
 
